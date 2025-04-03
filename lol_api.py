@@ -34,7 +34,6 @@ def getAccountTag(puuid: str, region: str = "americas"): #grabs account name and
     except requests.exceptions.RequestException as e:
         return("Error getting account tag!")
 
-
 def getPuuid(name: str, tag: str, region: str = "americas"): # gets the puuid from a riot tag uses new regions (ex: americas)
     api_url = "https://{}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{}/{}?api_key={}".format(region,name,tag,api_key)
 
@@ -170,12 +169,12 @@ def extract_player_roles(match_details: str):
     roles = {}
     if "info" in match_details and "participants" in match_details["info"]:
         for participant in match_details["info"]["participants"]:
-            summoner_name = participant["summonerName"]
+            # Use puuid as key if summonerName is empty
+            summoner_name = getAccountTag(participant["puuid"])
             puuid = participant["puuid"]
             role = participant["individualPosition"]
             roles[summoner_name] = {"role": role, "puuid": puuid}
     return roles
-
 
 
 #my puuid zHyQZrp_Jwu8TdeQ-8Q_bAkiHalERpp5HS_JFRn3VC9ZaHORdxfQgHfc3ADEWYSNvms9mqXYsVtGQA
@@ -220,7 +219,7 @@ def getMatches(puuid: str, count: str, region: str = "americas"):
         return []
 
 
-#print (getMatches("e7CCYZ2S7U6cKBTjesuTD3kAPyc2H-YsBhDmQ7J6_b5PnRsN2n4XD39ZZv6thlb1XPv27Dvd2rXueg","2")) 
+#print (getMatches("5oSjsiaQUOJr3wvbx2qkcX0u-C_yiOVKtCR4dRopJFzvutB9XEqf6p0Vq2VRC6VsLJQrqWoCW32N0g","1")) 
 #print (getMatches(getPuuid("katevolved","666","americas"),"1"))
 #print (getPuuid("Morememes","NA1"))
 #print (getMatches(getPuuid("juvin","mae"),"5"))
@@ -238,7 +237,7 @@ def getmatchDetails(match_id: str, region: str = "americas"):
         return ("Error getting match!")
 
 
-#print (getmatchDetails("NA1_4917316469"))
+#print (getmatchDetails("NA1_5258439296"))
 #print (extract_player_roles(getmatchDetails("NA1_4917316469")))
 
 
@@ -248,7 +247,7 @@ def getmatchDetails(match_id: str, region: str = "americas"):
 
 def getmatchStats(puuid: str, region: str = "americas", ids: list = None):
     if ids is None:
-        ids = getMatches(puuid, 1, region)[:1]
+        ids = getMatches(puuid, 5, region)[:1]
 
     total_tower_damage = 0
     total_deaths = 0
@@ -325,7 +324,7 @@ def getmatchStats(puuid: str, region: str = "americas", ids: list = None):
 
 
 
-#print (getmatchStats("zHyQZrp_Jwu8TdeQ-8Q_bAkiHalERpp5HS_JFRn3VC9ZaHORdxfQgHfc3ADEWYSNvms9mqXYsVtGQA","americas"))
+#print (getmatchStats("5oSjsiaQUOJr3wvbx2qkcX0u-C_yiOVKtCR4dRopJFzvutB9XEqf6p0Vq2VRC6VsLJQrqWoCW32N0g","americas"))
 
 #SUMMONER RATING CALCULATION
 
@@ -391,8 +390,8 @@ def calcSR(puuid: str = None):
         rank_stats = getStats(id, "na1")
         tier = rank_stats['tier']
         #print ("pass1")
-        if tier == "UNRANKED":
-            return 0
+        # if tier == "UNRANKED":
+        #     return 0
 
         LP = rank_stats['leaguePoints']
         #print ("pass2")
@@ -412,10 +411,12 @@ def calcSR(puuid: str = None):
         #print ("pass9")
         average_cs = stats['cs']
         #print ("pass10")
-        win_loss = wins / (wins + losses) * 100
+        #print(f"{average_tower_damage} / 175 | {average_kills} / {average_deaths} | {average_assists} / {average_deaths} | ")
 
         if tier in {"MASTER", "GRANDMASTER", "CHALLENGER"}:
             rank = LP * 0.05 * lpBonus(tier)
+        if tier == "UNRANKED":
+            rank = 1
         else:
             rank = rnC(rank)
 
@@ -425,7 +426,7 @@ def calcSR(puuid: str = None):
         KD = average_kills / average_deaths
         KDA_rating = ((KD / 1) * 10) + ((average_assists / average_deaths) * 2)
         CS_bonus = average_cs / 50
-
+        
         if tierScore(tier) > 0:
             rank_bonus = (tierScore(tier) + (rank * 0.2)) * 5
         else:
@@ -439,29 +440,30 @@ def calcSR(puuid: str = None):
         return 0
 
 
-#print (calcSR("UuwOjWkWG6ohdzsnIeUIDvREDPzW9EqY6VBArX9lbkXBM7rXdIM1yFbRVixkp_RlGgikzLJEdVnU7w"))
+#print (calcSR("5oSjsiaQUOJr3wvbx2qkcX0u-C_yiOVKtCR4dRopJFzvutB9XEqf6p0Vq2VRC6VsLJQrqWoCW32N0g"))
 
 #this is prob just gonna be wrong but who care rn
 
-def calcPercent(SR1: int, SR2: int):
-
-    blue_side_bias = 25
-    SR1 = SR1 + blue_side_bias
-    if SR1 > SR2:
-        winner = "Blue Side"
-    elif SR1 == SR2:
-        winner = "Coin Flip"
-    else:
-        winner = "Red Side"
-    if (max(SR1, SR2))/(min(SR1, SR2))*50 > 100:
-        chance = 100
-    else:
-        chance = (max(SR1, SR2))/(min(SR1, SR2))*50
-    calc = {
-        "winner": winner,
-        "chance": chance
+def calcPercent(SR1: int, SR2: int) -> dict:
+    """Enhanced win prediction with role-based adjustments"""
+    BLUE_SIDE_ADVANTAGE = 1.05  # 5% advantage
+    
+    effective_SR1 = SR1 * BLUE_SIDE_ADVANTAGE
+    total = effective_SR1 + SR2
+    
+    chance = (effective_SR1 / total) * 100
+    chance = max(10, min(90, chance))  # Keep between 10-90%
+    
+    return {
+        "winner": "Blue Side" if effective_SR1 > SR2 else "Red Side",
+        "chance": round(chance, 1),
+        "confidence": get_confidence_level(abs(50 - chance))
     }
-    return calc
+
+def get_confidence_level(difference: float) -> str:
+    if difference > 20: return "High"
+    if difference > 10: return "Medium"
+    return "Low"
 
 
 
@@ -476,7 +478,7 @@ def calcPercent(SR1: int, SR2: int):
 
 
 #print (getmatchDetails("NA1_4920877607"))
-#print (extract_player_roles(getmatchDetails("NA1_4917316469")))
+#print (extract_player_roles(getmatchDetails("NA1_5258439296")))
 
 
 # Main problem looks like rate limit is begin exceded

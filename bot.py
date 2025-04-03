@@ -158,14 +158,12 @@ async def predict(interaction: discord.Interaction, match_id: str):
     print(f"predicting match: {match_id}")
     
     try:
-        # Defer the response since this might take some time
         await interaction.response.defer()
-        
         now = datetime.datetime.now().strftime("%I:%M %p")
         region = "americas"
         region2 = "na1"
 
-        # Get match details and extract players
+        # Get match details
         match_details = getmatchDetails(match_id)
         if not match_details:
             await interaction.followup.send("Could not retrieve match details.", ephemeral=True)
@@ -194,39 +192,129 @@ async def predict(interaction: discord.Interaction, match_id: str):
         rsrT = 0
         bsr = []
         rsr = []
+        errors = []
+        zero_sr_count = 0  # Track how many players have 0 SR
         
         for i in range(5):
             try:
                 blue_puuid = blueside[bs[i]]['puuid']
                 red_puuid = redside[rs[i]]['puuid']
                 
-                blue_sr = calcSR(blue_puuid)
-                red_sr = calcSR(red_puuid)
+                blue_sr = calcSR(blue_puuid) or 0  # Default to 0 if None
+                red_sr = calcSR(red_puuid) or 0    # Default to 0 if None
                 
+                # Count players with 0 SR
+                if blue_sr == 0:
+                    zero_sr_count += 1
+                if red_sr == 0:
+                    zero_sr_count += 1
+                    
                 bsr.append(blue_sr)
                 bsrT += blue_sr
                 rsr.append(red_sr)
                 rsrT += red_sr
             except Exception as e:
                 print(f"Error calculating SR for player {i}: {e}")
-                await interaction.followup.send(f"Error calculating stats for player {i}", ephemeral=True)
-                return
+                errors.append(f"Error calculating stats for {bs[i]} or {rs[i]}")
+                continue
 
-        # Create prediction embed
+        if errors:
+            await interaction.followup.send("\n".join(errors), ephemeral=True)
+            return
+
+        if bsrT == 0 or rsrT == 0:
+            await interaction.followup.send("Could not calculate valid SR totals for both teams.", ephemeral=True)
+            return
+
+        # Create prediction
         prediction = calcPercent(bsrT, rsrT)
+        if not prediction:
+            await interaction.followup.send("Could not generate prediction.", ephemeral=True)
+            return
+
+        # Build description with warning if needed
+        description = f"**Predicted Winner: {prediction.get('winner', 'Unknown')} " + \
+                     f"({int(prediction.get('chance', 0))}% chance) " + \
+                     f"Confidence: ({prediction.get('confidence', 'Unknown')})**"
+        
+        # Add warning if multiple players have 0 SR
+        if zero_sr_count >= 2:
+            description += "\n\n⚠️ **Note:** This prediction may be less reliable as " + \
+                         f"{zero_sr_count} players have 0 SR (new or inactive players)."
+
         embed = discord.Embed(
             title=f"PREDICTION FOR MATCH: {match_id}", 
-            description=f"**Predicted Winner: {prediction['winner']} ({int(prediction['chance'])}% chance)**", 
+            description=description,
             color=0x0000ff
         )
         
+        # Add team information
         for i in range(5):
-            embed.add_field(name=f"{roles[i]} (Blue)", value=f"{bs[i]}\nSR: {bsr[i]}", inline=True)
-            embed.add_field(name="\u200b", value="\u200b", inline=True)  #
+            # Split summoner name into name and tag (assuming format "Name#Tag")
+            blue_name_parts = bs[i].split('#')
+            blue_name = blue_name_parts[0] if blue_name_parts else bs[i]
+            blue_tag = blue_name_parts[1] if len(blue_name_parts) > 1 else ""
+            
+            red_name_parts = rs[i].split('#')
+            red_name = red_name_parts[0] if red_name_parts else rs[i]
+            red_tag = red_name_parts[1] if len(red_name_parts) > 1 else ""
+            
+            embed.add_field(
+                name=f"{roles[i]} (Blue)", 
+                value=f"{bs[i]}\nSR: {bsr[i] if i < len(bsr) else 'N/A'}", 
+                inline=True
+            )
+            embed.add_field(
+                name=f"{roles[i]} (Red)", 
+                value=f"{rs[i]}\nSR: {rsr[i] if i < len(rsr) else 'N/A'}", 
+                inline=True
+            )
+            embed.add_field(name="\u200b", value="\u200b", inline=True)  # Spacer
+
+        # Create a view with buttons for each player
+        view = discord.ui.View()
         
+        # Add buttons for blue side players
+        for i in range(5):
+            name_parts = bs[i].split('#')
+            name = name_parts[0] if name_parts else bs[i]
+            tag = name_parts[1] if len(name_parts) > 1 else ""
+            
+            # Format the OP.GG URL
+            opgg_url = f"https://www.op.gg/summoners/na/{name}-{tag}" if tag else f"https://www.op.gg/summoners/na/{name}"
+            
+            # Add button
+            button = discord.ui.Button(
+                label=f"{roles[i]}: {bs[i]}",
+                url=opgg_url,
+                style=discord.ButtonStyle.link,
+                row=i
+            )
+            view.add_item(button)
+            
+        # Add buttons for red side players
+        for i in range(5):
+            name_parts = rs[i].split('#')
+            name = name_parts[0] if name_parts else rs[i]
+            tag = name_parts[1] if len(name_parts) > 1 else ""
+            
+            # Format the OP.GG URL
+            opgg_url = f"https://www.op.gg/summoners/na/{name}-{tag}" if tag else f"https://www.op.gg/summoners/na/{name}"
+            
+            # Add button
+            button = discord.ui.Button(
+                label=f"{roles[i]}: {rs[i]}",
+                url=opgg_url,
+                style=discord.ButtonStyle.link,
+                row=i
+            )
+            view.add_item(button)
+
+        await interaction.followup.send(embed=embed, view=view)
+
     except Exception as e:
-        print(f"Error in predict command: {e}")
-        await interaction.response.send_message(
+        print(f"Error in predict command: {str(e)}")
+        await interaction.followup.send(
             "An error occurred while processing your request.", 
             ephemeral=True
         )
