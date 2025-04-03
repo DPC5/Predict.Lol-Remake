@@ -31,7 +31,16 @@ The SR algorithm evaluates players across four key dimensions:
 
 ## SR Calculation Formula
 
-SR = Floor[RankBonus + TowerDamageBonus + KDARating + CSBonus]
+\[ SR = \left\lfloor 5(s(T) + 0.2R) + \frac{TD}{175} + \left( \frac{10K}{D} + \frac{2A}{D} \right) + \frac{CS}{50} \right\rfloor \]
+
+Where:
+- \( s(T) \) = Tier score (CHALLENGER=32, GRANDMASTER=24, etc.)
+- \( R \) = Roman numeral rank conversion (I=4, IV=1)
+- \( TD \) = Average tower damage
+- \( K \) = Average kills
+- \( D \) = Average deaths
+- \( A \) = Average assists
+- \( CS \) = Average creep score
 
 ### 1. Rank Bonus (50-75% weight)
 
