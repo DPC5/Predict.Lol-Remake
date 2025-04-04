@@ -1,6 +1,6 @@
 
 import discord 
-from discord import app_commands
+from discord import app_commands, colour
 from discord.ext import commands
 from lol_api import getPuuid, getAccountTag, getSummoner, getMastery, getStats, calcSR, extract_player_roles, getmatchDetails, calcPercent
 # from predict import calcSR, calcPercent
@@ -9,30 +9,33 @@ import json
 import datetime
 import asyncio
 import os
-data_file = 'data.json'
+
 
 
 TEST_GUILD = discord.Object(id=1349068689521115197)
+STATS_FILE = 'data/stats.json'
+CONFIG_FILE = 'data/config.json'
 
+RED = 0xff0000
+BLUE = 0x0400ff
 
-with open('config.json', 'r') as file:
+with open(CONFIG_FILE, 'r') as file:
     config = json.load(file)
+
+
 token = config.get('token')
 RIOT_API = config.get('RIOT_API')
 
-bot = commands.Bot(command_prefix="^", intents = discord.Intents.all())
 
+with open(STATS_FILE, 'r') as f:
+    stats = json.load(f)
 
-with open(data_file, 'r') as f:
-    data = json.load(f)
-
-
-ver = data['version']
+ver = stats['version']
 opgg_image_path = "opgg.png"
 
+bot = commands.Bot(command_prefix= '^',intents = discord.Intents.all())
 
 bot.remove_command('help')
-
 
 @bot.event
 async def on_ready():
@@ -53,7 +56,7 @@ async def on_ready():
 
 async def update_activity():
     while True:
-        predicts = data['predict']
+        predicts = stats['predict']
         await bot.change_presence(activity=discord.Streaming(name="{} Predictions".format(predicts), url="https://www.twitch.tv/morememes_"))
         await asyncio.sleep(30)
 
@@ -153,7 +156,7 @@ async def lookup(interaction: discord.Interaction, name: str):
 
 @bot.tree.command(name="predict", description="Predict the outcome of a match", guild=TEST_GUILD)
 @app_commands.describe(match_id="The match ID to analyze")
-@app_commands.checks.cooldown(1, 120, key=lambda i: (i.guild_id))
+@app_commands.checks.cooldown(1, 30, key=lambda i: (i.guild_id))
 async def predict(interaction: discord.Interaction, match_id: str):
     print(f"predicting match: {match_id}")
     
@@ -241,11 +244,15 @@ async def predict(interaction: discord.Interaction, match_id: str):
         if zero_sr_count >= 2:
             description += "\n\n⚠️ **Note:** This prediction may be less reliable as " + \
                          f"{zero_sr_count} players have 0 SR (new or inactive players)."
-
+        if prediction.get('winner') == 'Blue Side':
+            color = BLUE
+        else:
+            color = RED
+        print(color)
         embed = discord.Embed(
             title=f"PREDICTION FOR MATCH: {match_id}", 
             description=description,
-            color=0x0000ff
+            color=color
         )
         
         # Add team information
@@ -270,45 +277,6 @@ async def predict(interaction: discord.Interaction, match_id: str):
                 inline=True
             )
             embed.add_field(name="\u200b", value="\u200b", inline=True)  # Spacer
-
-        # Create a view with buttons for each player
-        view = discord.ui.View()
-        
-        # Add buttons for blue side players
-        for i in range(5):
-            name_parts = bs[i].split('#')
-            name = name_parts[0] if name_parts else bs[i]
-            tag = name_parts[1] if len(name_parts) > 1 else ""
-            
-            # Format the OP.GG URL
-            opgg_url = f"https://www.op.gg/summoners/na/{name}-{tag}" if tag else f"https://www.op.gg/summoners/na/{name}"
-            
-            # Add button
-            button = discord.ui.Button(
-                label=f"{roles[i]}: {bs[i]}",
-                url=opgg_url,
-                style=discord.ButtonStyle.link,
-                row=i
-            )
-            view.add_item(button)
-            
-        # Add buttons for red side players
-        for i in range(5):
-            name_parts = rs[i].split('#')
-            name = name_parts[0] if name_parts else rs[i]
-            tag = name_parts[1] if len(name_parts) > 1 else ""
-            
-            # Format the OP.GG URL
-            opgg_url = f"https://www.op.gg/summoners/na/{name}-{tag}" if tag else f"https://www.op.gg/summoners/na/{name}"
-            
-            # Add button
-            button = discord.ui.Button(
-                label=f"{roles[i]}: {rs[i]}",
-                url=opgg_url,
-                style=discord.ButtonStyle.link,
-                row=i
-            )
-            view.add_item(button)
 
         await interaction.followup.send(embed=embed, view=view)
 

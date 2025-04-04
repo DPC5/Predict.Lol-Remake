@@ -1,13 +1,15 @@
 import requests
 from lol_api_idf import get_champion_by_key
+from datetime import datetime, timedelta
 import concurrent.futures
 import json
+import os
 
 # with open('config.json', 'r') as file:
 #     config = json.load(file)
 # api_key = config.get('RIOT_API')
 
-with open('config.json', 'r') as file:
+with open('data/config.json', 'r') as file:
     config = json.load(file)
 
 api_key = config.get('RIOT_API')
@@ -17,6 +19,47 @@ api_key = config.get('RIOT_API')
 # Accurancy right now is close to around 75% which is fine
 # Im not happy with the tuner yet I waant to make it a bit closer, maybe calculating average dragon/baron
 # And average cs woulld be nice
+
+DATA_FILE = 'data/data.json'
+DATA_EXPIRY_HOURS = 48
+
+def load_data():
+    """Load cached data from file"""
+    if not os.path.exists(DATA_FILE):
+        return {"players": {}, "last_updated": {}}
+    
+    try:
+        with open(DATA_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {"players": {}, "last_updated": {}}
+    
+def save_data(data):
+    """Save data to cache file"""
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def get_player_data(puuid):
+    """Get player data from cache if recent enough"""
+    data = load_data()
+    player_data = data["players"].get(puuid)
+    last_updated = data["last_updated"].get(puuid)
+    
+    if player_data and last_updated:
+        last_update_time = datetime.fromisoformat(last_updated)
+        if datetime.now() - last_update_time < timedelta(hours=DATA_EXPIRY_HOURS):
+            return player_data
+    return None
+
+def update_player_data(puuid, player_data):
+    """Update cache with new player data"""
+    data = load_data()
+    data["players"][puuid] = player_data
+    data["last_updated"][puuid] = datetime.now().isoformat()
+    save_data(data)
+
+
+
 
 
 
@@ -54,23 +97,25 @@ def getPuuid(name: str, tag: str, region: str = "americas"): # gets the puuid fr
 #get summoner
 
 def getSummoner(puuid: str, region: str = "na1"): #grabs summoner data WARNING USES OLDER REGION TAGS
+    """Get basic summoner profile data by PUUID.
+    
+    ⚠️ Uses older region tags (v4 API)
+    
+    Args:
+        puuid: Player's unique ID
+        region: Server region code (default: "na1")
+    
+    Returns:
+        dict: Summoner data (id, name, level, etc.)
+        str: Error message if API call fails
+    """
+    
     api_url = "https://{}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/{}?api_key={}".format(region,puuid,api_key)
 
     try:
         response = requests.get(api_url)
         return response.json()
-
-        #allowed responses 
-        # 'id'
-        # 'accoundId'
-        # 'puuid'
-        # 'name'
-        # 'profileIconId'
-        # 'revisionDate'
-        # 'summonerLevel'
         
-
-
     except requests.exceptions.RequestException as e:
         return("Error getting summoner!")
 
@@ -82,6 +127,32 @@ def getSummoner(puuid: str, region: str = "na1"): #grabs summoner data WARNING U
 #get rank
 
 def getStats(id: str, region: str = "na1"): #get account game stats BY ID NOT PUUID
+    """Get ranked stats for a summoner by ID.
+    
+    Args:
+        id: Summoner ID (not PUUID)
+        region: Server region code (default: "na1")
+    
+    Returns:
+        dict: Ranked stats with tier/rank/LP if ranked
+              Default UNRANKED dict if unranked
+        str: Error message if API call fails
+    Example Response:
+        leagueId: 3a342298-b1a0-4ab3-966c-5972c807a01f
+        queueType: RANKED_SOLO_5x5
+        tier: "SILVER"
+        rank: "II"
+        summonerId: "FJ_3CABngRZ_7nBggFR3zAIp7lrMZVnY3DItxS1LtytQpKMa"
+        summonerName: "Morememes"
+        leaguePoints: 37
+        wins: 13
+        losses: 13
+        veteran: false
+        inactive: false
+        freshBlood: false
+        hotStreak: false
+    """
+    
     api_url = "https://{}.api.riotgames.com/lol/league/v4/entries/by-summoner/{}?api_key={}".format(region,id,api_key)
 
     try:
@@ -100,20 +171,6 @@ def getStats(id: str, region: str = "na1"): #get account game stats BY ID NOT PU
             }
             return response
     
-        # example responses 
-        # "leagueId": "3a342298-b1a0-4ab3-966c-5972c807a01f",
-        # "queueType": "RANKED_SOLO_5x5",
-        # "tier": "SILVER",
-        # "rank": "II",
-        # "summonerId": "FJ_3CABngRZ_7nBggFR3zAIp7lrMZVnY3DItxS1LtytQpKMa",
-        # "summonerName": "Morememes",
-        # "leaguePoints": 37,
-        # "wins": 13,
-        # "losses": 13,
-        # "veteran": false,
-        # "inactive": false,
-        # "freshBlood": false,
-        # "hotStreak": false
     
     except requests.exceptions.RequestException as e:
         return("Error getting game stats!")
@@ -124,12 +181,23 @@ def getStats(id: str, region: str = "na1"): #get account game stats BY ID NOT PU
 #mastery handling 
 
 def getMastery(puuid: str, count: int = 1): #returns mastery for champ(s) in count
+    """Get top champion mastery data for a player.
+    
+    Args:
+        puuid: Player's unique ID
+        count: Number of top champions to return (default: 1)
+    
+    Returns:
+        list: Champion names ordered by mastery (highest first)
+        str: Error message if API call fails
+    """
+    
     api_url = "https://na1.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/{}/top?api_key={}&count={}".format(puuid,api_key,count)
 
     try:
 
-        response = requests.get(api_url) #grabbing response of the api
-        response.raise_for_status() #checking for error 4 or 5xx code
+        response = requests.get(api_url) 
+        response.raise_for_status() e
         mastery_info = response.json()
 
         champion_names = []
@@ -139,7 +207,7 @@ def getMastery(puuid: str, count: int = 1): #returns mastery for champ(s) in cou
             champion_names.append(champion_name)
 
         return champion_names
-        #this returns a dictonary of champs, to locate do [x] x being the number in highest to lowest champ to select
+       
 
     except requests.exceptions.RequestException as e:
         return("Error getting mastery!")
@@ -148,9 +216,17 @@ def getMastery(puuid: str, count: int = 1): #returns mastery for champ(s) in cou
     
 
 
-#gets information on the current match that the user is in
-#requires Sumonerid
+
 def getMatch(id: str, region = "na1"):
+    """Get real-time information about the summoner's current match.
+    
+    Fetches live game data from Riot's Spectator API for the specified summoner.
+
+    Args:
+        id (str): The summoner ID to look up current match for
+        region (str, optional): The server region code. Defaults to "na1".
+            Available regions: na1, euw1, eun1, etc.
+    """
     api_url = "https://{}.api.riotgames.com/lol/spectator/v4/active-games/by-summoner/{}?api_key={}".format(region, id, api_key)
 
     try:
@@ -160,7 +236,7 @@ def getMatch(id: str, region = "na1"):
         return ("Error getting match!")
     
 #print (getSummoner(getPuuid("Morememes","na1"))['id'])
-#print (getMatch(getSummoner(getPuuid("Morememes","na1"))['id']))
+#print (getMatch(getSummoner(getPuuid("Morememes","na1"))))
     
 
 def extract_player_roles(match_details: str):
@@ -383,6 +459,13 @@ def counterCalc(role1: str, role2: str):
 #main calculation for SR
 def calcSR(puuid: str = None):
     print ("calc sr {}".format(puuid))
+    cached_data = get_player_data(puuid)
+    if cached_data:
+        try:
+            print("found cached data!")
+            return int(cached_data.get("cached_sr", 0))
+        except:
+            pass
     try:
         stats = getmatchStats(puuid, "americas")
         #print (stats)
@@ -434,6 +517,16 @@ def calcSR(puuid: str = None):
         SR = int(rank_bonus + tower_damage_bonus + KDA_rating + CS_bonus )
         if SR is None:
             SR = 0
+        cache_entry = {
+            "cached_sr": SR,
+            "tier": tier,
+            "rank": rank,
+            "kda": KDA_rating,
+            "wins": wins,
+            "losses": losses,
+            "last_updated": datetime.now().isoformat()
+        }
+        update_player_data(puuid, cache_entry)
         return SR
     except Exception as e:
         print(f"Error calculating SR: {e}")
